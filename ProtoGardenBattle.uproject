@@ -1,6 +1,6 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "5.2",
+	"EngineAssociation": "{29A87431-49CA-94FD-77F8-C38604842A56}",
 	"Category": "",
 	"Description": "",
 	"Modules": [
@@ -20,6 +20,18 @@
 		},
 		{
 			"Name": "GeometryScripting",
+			"Enabled": true
+		},
+		{
+			"Name": "PerforceSourceControl",
+			"Enabled": false
+		},
+		{
+			"Name": "PlasticSourceControl",
+			"Enabled": false
+		},
+		{
+			"Name": "Water",
 			"Enabled": true
 		}
 	]
