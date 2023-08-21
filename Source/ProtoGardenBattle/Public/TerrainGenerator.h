@@ -125,6 +125,16 @@ public:
 
     UFUNCTION(BlueprintCallable)
         void GenerateNewIslandMesh(FTerrainGenCompletedDelegate Out, UDynamicMesh* IslandMesh, const FTransform IslandTransform, const int IslandTileSize, const FTerrainGenerationNoiseSettings BaseTerrainGenerationSettings, const FIslandMaterialDataCollection& InputIslandMaterialDataCollection);
+    UFUNCTION(BlueprintCallable)
+        FIntVector GetBiomeFromWorldPosition(FVector location);
+
+private:
+    UPROPERTY(BlueprintType)
+        int MapSize;
+    UPROPERTY(BlueprintType)
+        FTerrainGenerationNoiseSettings GenerationSettings;
+    UPROPERTY(BlueprintType)
+        FVector OffsetsPerCondition;
 };
 
 

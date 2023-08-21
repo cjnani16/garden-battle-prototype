@@ -28,29 +28,38 @@ FLinearColor CalculateCondition(const FVector position, const int MapSize, const
 	return FLinearColor(temp, hum, elev);
 }
 
-void TryPlaceMaterial(FVector position, FVector currentVertexPosition, FLinearColor currentVertexCondition, FVector perConditionOffsets, const int MapSize, const FTerrainGenerationNoiseSettings GenerationSettings, FIslandMaterialDataCollection& IslandMaterialDataCollection)
+FIntVector CalculateBiomeKey(FLinearColor condition)
 {
-
-	// Identify the biome for this location
-
-	// find the most extreme conditions
-	TArray<float> conditionExtremetiesSorted = {FMath::Abs(currentVertexCondition.R - 0.5f), FMath::Abs(currentVertexCondition.G - 0.5f), FMath::Abs(currentVertexCondition.B - 0.5f)};
-	conditionExtremetiesSorted.Sort();
-	TArray<int> conditionSigns = { (int)(currentVertexCondition.R > 0.5f)*2-1, (int)(currentVertexCondition.G > 0.5f)*2-1, (int)(currentVertexCondition.B > 0.5f)*2-1};
-	TArray<float> conditionValues = { FMath::Abs(currentVertexCondition.R - 0.5f), FMath::Abs(currentVertexCondition.G - 0.5f), FMath::Abs(currentVertexCondition.B - 0.5f) };
+	// find the 2 most extreme conditions
+	TArray<float> conditionExtremetiesSorted = { FMath::Abs(condition.R - 0.5f), FMath::Abs(condition.G - 0.5f), FMath::Abs(condition.B - 0.5f) };
+	conditionExtremetiesSorted.StableSort();
+	TArray<int> conditionSigns = { (int)(condition.R > 0.5f) * 2 - 1, (int)(condition.G > 0.5f) * 2 - 1, (int)(condition.B > 0.5f) * 2 - 1 };
+	TArray<float> conditionValues = { FMath::Abs(condition.R - 0.5f), FMath::Abs(condition.G - 0.5f), FMath::Abs(condition.B - 0.5f) };
 	int mostExtremeConditionIndex = conditionValues.Find(conditionExtremetiesSorted[2]);
 	int secondMostExtremeConditionIndex = conditionValues.Find(conditionExtremetiesSorted[1]);
 
-	//UE_LOG(LogTemp, Display, TEXT("For Vertex (%f,%f), condition is : (%f,%f,%f), most extreme = %d, second most extreme = %d"), currentVertexPosition.X, currentVertexPosition.Y, currentVertexCondition.R, currentVertexCondition.G, currentVertexCondition.B, mostExtremeConditionIndex, secondMostExtremeConditionIndex);
-	
 	FIntVector biomeKey = FIntVector(
 		(int)(mostExtremeConditionIndex == 0 || secondMostExtremeConditionIndex == 0) * conditionSigns[0],
 		(int)(mostExtremeConditionIndex == 1 || secondMostExtremeConditionIndex == 1) * conditionSigns[1],
 		(int)(mostExtremeConditionIndex == 2 || secondMostExtremeConditionIndex == 2) * conditionSigns[2]
 	);
 
+	return biomeKey;
+}
+
+FIntVector UTerrainGenerator::GetBiomeFromWorldPosition(FVector location)
+{
+	return CalculateBiomeKey(CalculateCondition(location, MapSize, GenerationSettings, OffsetsPerCondition));
+}
+
+void TryPlaceMaterial(FVector position, FVector currentVertexPosition, FLinearColor currentVertexCondition, FVector perConditionOffsets, const int MapSize, const FTerrainGenerationNoiseSettings GenerationSettings, FIslandMaterialDataCollection& IslandMaterialDataCollection)
+{
+
+	// Identify the biome for this location
+	FIntVector biomeKey = CalculateBiomeKey(currentVertexCondition);
+
 	// get offsets for perlin frmo the biome
-	float biomePerlinOffset = perConditionOffsets[mostExtremeConditionIndex] + perConditionOffsets[secondMostExtremeConditionIndex];
+	float biomePerlinOffset = perConditionOffsets[biomeKey.X + 1]*7.0f + perConditionOffsets[biomeKey.Y + 1]*11.0f + perConditionOffsets[biomeKey.Z + 1];
 
 	//UE_LOG(LogTemp, Display, TEXT("  ...biome is : (%d,%d,%d)"), biomeKey.X, biomeKey.Y, biomeKey.Z);
 
@@ -80,7 +89,15 @@ void TryPlaceMaterial(FVector position, FVector currentVertexPosition, FLinearCo
 			//UE_LOG(LogTemp, Display, TEXT("Spawn chance for %s: %f, roll = %f"), *mat.meshAsset->GetFName().ToString(), spawnProbability, Number);
 
 			if (spawn) {
-				materialList->List[materialListIndex].instanceLocations.Add(FTransform(currentVertexPosition));
+				float widthScale = TerrainGenPerlinHelpers::Stream.FRandRange(0.8f, 1.2f);
+				float heightScale = TerrainGenPerlinHelpers::Stream.FRandRange(0.8f, 1.2f);
+				materialList->List[materialListIndex].instanceLocations.Add(
+					FTransform(
+						FRotator(0, TerrainGenPerlinHelpers::Stream.FRandRange(0.0f, 360.0f), 0),
+						currentVertexPosition,
+						FVector(widthScale, widthScale, heightScale)
+					)
+				);
 				break;
 			}
 		}
@@ -95,11 +112,17 @@ void ResetSeed(int32 seed) {
 
 void UTerrainGenerator::GenerateNewIslandMesh(FTerrainGenCompletedDelegate Out, UDynamicMesh* IslandMesh, const FTransform IslandTransform, const int IslandTileSize, const FTerrainGenerationNoiseSettings BaseTerrainGenerationSettings, const FIslandMaterialDataCollection& InputIslandMaterialDataCollection)
 {
-	FIslandMaterialDataCollection IslandMaterialDataCollection = InputIslandMaterialDataCollection;
-
 	ResetSeed(BaseTerrainGenerationSettings.Seed);
 
-	AsyncTask(ENamedThreads::AnyNormalThreadNormalTask, [Out, IslandMesh, IslandTransform, IslandTileSize, BaseTerrainGenerationSettings, IslandMaterialDataCollection]() mutable
+	UE_LOG(LogTemp, Display, TEXT("(0/4) Terrain Generation Seed: %d"), BaseTerrainGenerationSettings.Seed);
+
+	FIslandMaterialDataCollection IslandMaterialDataCollection = InputIslandMaterialDataCollection;
+	MapSize = IslandTileSize;
+	GenerationSettings = BaseTerrainGenerationSettings;
+	OffsetsPerCondition = FVector(TerrainGenPerlinHelpers::Stream.FRandRange(-1000.2, 1000.3), TerrainGenPerlinHelpers::Stream.FRandRange(-1000.5, 1000.4), TerrainGenPerlinHelpers::Stream.FRandRange(-1000.1, 1000.0));
+	FVector offsetsPerCondition = OffsetsPerCondition;
+
+	AsyncTask(ENamedThreads::AnyNormalThreadNormalTask, [Out, IslandMesh, IslandTransform, IslandTileSize, BaseTerrainGenerationSettings, IslandMaterialDataCollection, offsetsPerCondition]() mutable
 		{
 			UE_LOG(LogTemp, Display, TEXT("(1/4) Terrain Generation Progress: Tesselating..."));
 			UGeometryScriptLibrary_MeshSubdivideFunctions::ApplyUniformTessellation(IslandMesh, IslandTileSize - 1, nullptr);
@@ -109,10 +132,6 @@ void UTerrainGenerator::GenerateNewIslandMesh(FTerrainGenCompletedDelegate Out, 
 			FVector min = bbox.Min * IslandTransform.GetScale3D();
 			FVector max = bbox.Max * IslandTransform.GetScale3D();
 			UE_LOG(LogTemp, Warning, TEXT("Terrain Generation Progress: BBox Min = (%f/%f), Max = (%f/%f)."), min.X, min.Y, max.X, max.Y);
-
-			//Offsets for confitiond
-			
-			FVector offsets = FVector(TerrainGenPerlinHelpers::Stream.FRandRange(-1000.2, 1000.3), TerrainGenPerlinHelpers::Stream.FRandRange(-1000.5, 1000.4), TerrainGenPerlinHelpers::Stream.FRandRange(-1000.1, 1000.0));
 
 			// Get mesh vertex and color lists to set
 			FGeometryScriptVectorList VertexPositionList;
@@ -133,10 +152,10 @@ void UTerrainGenerator::GenerateNewIslandMesh(FTerrainGenCompletedDelegate Out, 
 
 				FVector vertexUVPosition = FVector((currentVertexPosition.X - min.X)/(max.X - min.X), (currentVertexPosition.Y - min.Y)/(max.Y - min.Y), 0);
 
-				FLinearColor currentVertexCondition = CalculateCondition(vertexUVPosition, IslandTileSize, BaseTerrainGenerationSettings, offsets);
+				FLinearColor currentVertexCondition = CalculateCondition(vertexUVPosition, IslandTileSize, BaseTerrainGenerationSettings, offsetsPerCondition);
 				currentVertexPosition = FVector(currentVertexPosition.X, currentVertexPosition.Y, CalculateHeight(vertexUVPosition, IslandTileSize, BaseTerrainGenerationSettings, currentVertexCondition));
 				
-				TryPlaceMaterial(vertexUVPosition, currentVertexPosition, currentVertexCondition, offsets, IslandTileSize, BaseTerrainGenerationSettings, IslandMaterialDataCollection);
+				TryPlaceMaterial(vertexUVPosition, currentVertexPosition, currentVertexCondition, offsetsPerCondition, IslandTileSize, BaseTerrainGenerationSettings, IslandMaterialDataCollection);
 
 				// Transform back to world space
 				currentVertexPosition = UKismetMathLibrary::InverseTransformLocation(IslandTransform, currentVertexPosition);
@@ -170,7 +189,7 @@ void UTerrainGenerator::GenerateNewIslandMesh(FTerrainGenCompletedDelegate Out, 
 
 				FVector vertexUVPosition = FVector((startPosition.X - min.X) / (max.X - min.X), (startPosition.Y - min.Y) / (max.Y - min.Y), 0);
 
-				FLinearColor currentVertexCondition = CalculateCondition(vertexUVPosition, IslandTileSize, BaseTerrainGenerationSettings, offsets);
+				FLinearColor currentVertexCondition = CalculateCondition(vertexUVPosition, IslandTileSize, BaseTerrainGenerationSettings, offsetsPerCondition);
 				startPosition = FVector(startPosition.X, startPosition.Y, CalculateHeight(vertexUVPosition, IslandTileSize, BaseTerrainGenerationSettings, currentVertexCondition));//GeneratedHeightMap[heightMapIndex]);
 
 				startPositions.Add(startPosition);
