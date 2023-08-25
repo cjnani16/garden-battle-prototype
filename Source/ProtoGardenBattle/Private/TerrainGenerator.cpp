@@ -11,23 +11,6 @@ UTerrainGenerator::~UTerrainGenerator()
 {
 }
 
-float CalculateHeight(const FVector position, const int MapSize, const FTerrainGenerationNoiseSettings GenerationSettings, FLinearColor condition)
-{
-	float CoastalHeightModifier = FMath::Max(0.0f, 1.0f - (FMath::Max(0.0f, FVector::Dist2D(position, FVector(0.5f, 0.5f, 0.0f)) - GenerationSettings.IslandUVRadius) / (GenerationSettings.IslandUVCoastalRadius)));
-
-	float heightRaw = GenerationSettings.HeightFactor * CoastalHeightModifier * ((GenerationSettings.ElevationConditionHeightContributionRatio * condition.B) + ((1.0f - GenerationSettings.ElevationConditionHeightContributionRatio) * (FMath::Pow((TerrainGenPerlinHelpers::PerlinNoise2D(GenerationSettings.XYScale * (float)MapSize *  FVector2D(position.X, position.Y)) / 2.0f) + 0.5f, GenerationSettings.PerlinPower))));
-	float heightTerraced = FMath::Floor(heightRaw / GenerationSettings.HeightTerracing) * GenerationSettings.HeightTerracing;
-	return heightTerraced;
-}
-
-FLinearColor CalculateCondition(const FVector position, const int MapSize, const FTerrainGenerationNoiseSettings GenerationSettings, FVector offsetsPerCondition)
-{
-	float temp = (FMath::Pow((TerrainGenPerlinHelpers::PerlinNoise2D(GenerationSettings.XYScale * GenerationSettings.IslandConditionChangeFreq * (float)MapSize * FVector2D(position.X + offsetsPerCondition.X, position.Y + offsetsPerCondition.X)) / 2.0f) + 0.5f, GenerationSettings.IslandConditionChangePower));
-	float hum = (FMath::Pow((TerrainGenPerlinHelpers::PerlinNoise2D(GenerationSettings.XYScale * GenerationSettings.IslandConditionChangeFreq * (float)MapSize * FVector2D(position.X + offsetsPerCondition.Y, position.Y + offsetsPerCondition.Y)) / 2.0f) + 0.5f, GenerationSettings.IslandConditionChangePower));
-	float elev = (FMath::Pow((TerrainGenPerlinHelpers::PerlinNoise2D(GenerationSettings.XYScale * GenerationSettings.IslandConditionChangeFreq * (float)MapSize * FVector2D(position.X + offsetsPerCondition.Z, position.Y + offsetsPerCondition.Z)) / 2.0f) + 0.5f, GenerationSettings.IslandConditionChangePower));
-	return FLinearColor(temp, hum, elev);
-}
-
 FIntVector CalculateBiomeKey(FLinearColor condition)
 {
 	// find the 2 most extreme conditions
@@ -47,9 +30,42 @@ FIntVector CalculateBiomeKey(FLinearColor condition)
 	return biomeKey;
 }
 
+float CalculateHeight(const FVector position, const int MapSize, const FTerrainGenerationNoiseSettings GenerationSettings, FLinearColor condition)
+{
+	float CoastalHeightModifier = FMath::Max(0.0f, 1.0f - (FMath::Max(0.0f, FVector::Dist2D(position, FVector(0.5f, 0.5f, 0.0f)) - GenerationSettings.IslandUVRadius) / (GenerationSettings.IslandUVCoastalRadius)));
+
+	float BiomeHeightModifier = (((FVector(CalculateBiomeKey(condition))+FVector::One())/2.0f).Z * GenerationSettings.ElevationConditionHeightContributionRatio) + (1.0f - GenerationSettings.ElevationConditionHeightContributionRatio);
+
+	float ElevationFrequencyModifier = (condition.B * GenerationSettings.ElevationConditionFreqContributionRatio) + (1.0f - GenerationSettings.ElevationConditionFreqContributionRatio);
+
+	float heightRaw = 0;
+	float p = 0.5;
+	float l = 2.0f;
+	for (int o = 0; o < 3; o++) {
+		heightRaw += FMath::Pow(p,o) * GenerationSettings.HeightFactor * CoastalHeightModifier * ((BiomeHeightModifier) * (/*(1.0f - GenerationSettings.ElevationConditionHeightContributionRatio) * */ (FMath::Pow((TerrainGenPerlinHelpers::PerlinNoise2D(GenerationSettings.XYScale * ElevationFrequencyModifier * (float)MapSize * FMath::Pow(2.0f, o) * FVector2D(position.X, position.Y)) / 2.0f) + 0.5f, GenerationSettings.PerlinPower))));
+	}
+	
+	float heightTerraced = FMath::Floor(heightRaw / GenerationSettings.HeightTerracing) * GenerationSettings.HeightTerracing;
+	return heightTerraced;
+}
+
+FLinearColor CalculateCondition(const FVector position, const int MapSize, const FTerrainGenerationNoiseSettings GenerationSettings, FVector offsetsPerCondition)
+{
+	float CoastalHeightModifier = FMath::Max(0.0f, 1.0f - (FMath::Max(0.0f, FVector::Dist2D(position, FVector(0.5f, 0.5f, 0.0f)) - GenerationSettings.IslandUVRadius) / (GenerationSettings.IslandUVCoastalRadius)));
+
+	float temp = (FMath::Pow((TerrainGenPerlinHelpers::PerlinNoise2D(GenerationSettings.XYScale * GenerationSettings.IslandConditionChangeFreq * (float)MapSize * FVector2D(position.X + offsetsPerCondition.X, position.Y + offsetsPerCondition.X)) / 2.0f) + 0.5f, GenerationSettings.IslandConditionChangePower));
+	float hum = (FMath::Pow((TerrainGenPerlinHelpers::PerlinNoise2D(GenerationSettings.XYScale * GenerationSettings.IslandConditionChangeFreq * (float)MapSize * FVector2D(position.X + offsetsPerCondition.Y, position.Y + offsetsPerCondition.Y)) / 2.0f) + 0.5f, GenerationSettings.IslandConditionChangePower));
+	float elev = CoastalHeightModifier * (FMath::Pow((TerrainGenPerlinHelpers::PerlinNoise2D(GenerationSettings.XYScale * GenerationSettings.IslandConditionChangeFreq * (float)MapSize * FVector2D(position.X + offsetsPerCondition.Z, position.Y + offsetsPerCondition.Z)) / 2.0f) + 0.5f, GenerationSettings.IslandConditionChangePower));
+	return FLinearColor(temp, hum, elev);
+}
+
+
 FIntVector UTerrainGenerator::GetBiomeFromWorldPosition(FVector location)
 {
-	return CalculateBiomeKey(CalculateCondition(location, MapSize, GenerationSettings, OffsetsPerCondition));
+
+	FVector vertexUVPosition = FVector((location.X - BBoxMin.X) / (BBoxMax.X - BBoxMin.X), (location.Y - BBoxMin.Y) / (BBoxMax.Y - BBoxMin.Y), 0);
+
+	return CalculateBiomeKey(CalculateCondition(vertexUVPosition, MapSize, GenerationSettings, OffsetsPerCondition));
 }
 
 void TryPlaceMaterial(FVector position, FVector currentVertexPosition, FLinearColor currentVertexCondition, FVector perConditionOffsets, const int MapSize, const FTerrainGenerationNoiseSettings GenerationSettings, FIslandMaterialDataCollection& IslandMaterialDataCollection)
@@ -67,6 +83,18 @@ void TryPlaceMaterial(FVector position, FVector currentVertexPosition, FLinearCo
 	int biomeIndex = IslandMaterialDataCollection.SupportedBiomes.Find(biomeKey);
 	if (biomeIndex > 0) {
 		FIslandMaterialList* materialList = &IslandMaterialDataCollection.PerBiomeMaterials[biomeIndex];
+		
+		int32 seed = FMath::RoundToInt32(currentVertexPosition.X * 0.1f + currentVertexPosition.Y * 0.7f);
+		FRandomStream random = FRandomStream(seed);
+
+		// Shuffle the list
+		const int32 NumShuffles = materialList->List.Num() - 1;
+		for (int32 i = 0; i < NumShuffles; ++i)
+		{
+			int32 SwapIdx = random.RandRange(i, NumShuffles);
+			materialList->List.Swap(i, SwapIdx);
+		}
+
 		for (int materialListIndex = 0; materialListIndex < materialList->List.Num(); materialListIndex++) {
 			
 			FIslandMaterialData& mat = materialList->List[materialListIndex];
@@ -74,30 +102,51 @@ void TryPlaceMaterial(FVector position, FVector currentVertexPosition, FLinearCo
 			//Calculate a probability for this material
 			
 			// increase frequency with lacunarity
-			float spawnProbability = IslandMaterialDataCollection.OverallMaterialDensity * (FMath::Pow((TerrainGenPerlinHelpers::PerlinNoise2D(GenerationSettings.XYScale * GenerationSettings.IslandConditionChangeFreq * FMath::Pow(IslandMaterialDataCollection.PerOctaveLacunarity, mat.octave) * (float)MapSize * FVector2D(position.X + biomePerlinOffset, position.Y + biomePerlinOffset)) / 2.0f) + 0.5f, GenerationSettings.IslandConditionChangePower));
+			float spawnProbability = 0;
+			
+			
+			spawnProbability += (FMath::Pow((
+				TerrainGenPerlinHelpers::PerlinNoise2D(
+					GenerationSettings.XYScale * 2.0f *
+					FMath::Pow(IslandMaterialDataCollection.PerOctaveLacunarity, mat.octave) *
+					(float)MapSize *
+					FVector2D(position.X /* + biomePerlinOffset*/, position.Y /* + biomePerlinOffset*/)
+				) / 2.0f) + 0.5f,
+				GenerationSettings.PerlinPower*2.0f));
+			
 
 			// lower amplitude with persistence
-			spawnProbability *= FMath::Pow(IslandMaterialDataCollection.PerOctavePersistence, mat.octave);
+			// spawnProbability *= FMath::Pow(IslandMaterialDataCollection.PerOctavePersistence, mat.octave);
 
 			// shift phase with centrality
-			spawnProbability *= (1.0f - FMath::Abs(spawnProbability - mat.centrality));
+			//spawnProbability = (1.0f - FMath::Abs(spawnProbability - mat.centrality));
+			spawnProbability *= IslandMaterialDataCollection.OverallMaterialDensity * mat.rarity;
 
 			// threshold with rarity
-			float Number = TerrainGenPerlinHelpers::Stream.FRand();
-			bool spawn = (spawnProbability * mat.rarity > 0) && (spawnProbability * mat.rarity >= Number);
+			float Number = random.FRand();
+			bool spawn = (spawnProbability > 0) && (spawnProbability  >= Number);
 
 			//UE_LOG(LogTemp, Display, TEXT("Spawn chance for %s: %f, roll = %f"), *mat.meshAsset->GetFName().ToString(), spawnProbability, Number);
 
 			if (spawn) {
-				float widthScale = TerrainGenPerlinHelpers::Stream.FRandRange(0.8f, 1.2f);
-				float heightScale = TerrainGenPerlinHelpers::Stream.FRandRange(0.8f, 1.2f);
+				float widthScale = random.FRandRange(0.8f, 1.2f) * mat.meshScalingFactor.X;
+				float heightScale = random.FRandRange(0.8f, 1.2f) * mat.meshScalingFactor.Z;
+
+				//float moveLimit = (1.0f/(float)MapSize);
+
+				//FVector shiftedPosition = FVector(position.X + random.FRandRange(-moveLimit, moveLimit), position.Y + random.FRandRange(-moveLimit, moveLimit), 0);
+
+				//shiftedPosition.Z = CalculateHeight(shiftedPosition, MapSize, GenerationSettings, CalculateCondition(shiftedPosition, MapSize, GenerationSettings, perConditionOffsets));
+				//shiftedPosition.X = shiftedPosition.X * 
+
 				materialList->List[materialListIndex].instanceLocations.Add(
 					FTransform(
-						FRotator(0, TerrainGenPerlinHelpers::Stream.FRandRange(0.0f, 360.0f), 0),
-						currentVertexPosition,
+						FRotator(0, random.FRandRange(0.0f, 360.0f), 0),
+						currentVertexPosition + FVector(random.FRandRange(-15, 15), random.FRandRange(-15, 15), 0),
 						FVector(widthScale, widthScale, heightScale)
 					)
 				);
+				materialList->List[materialListIndex].name = mat.meshAsset ? mat.meshAsset->GetName() : FString::Printf(TEXT("POT_%d_%d"), biomeIndex, materialListIndex);
 				break;
 			}
 		}
@@ -106,6 +155,7 @@ void TryPlaceMaterial(FVector position, FVector currentVertexPosition, FLinearCo
 }
 
 void ResetSeed(int32 seed) {
+	memcpy(TerrainGenPerlinHelpers::Permutation, TerrainGenPerlinHelpers::PermutationBase, sizeof(int32)*512);
 	Algo::Rotate(TerrainGenPerlinHelpers::Permutation, seed);
 	TerrainGenPerlinHelpers::Stream = FRandomStream(seed);
 }
@@ -122,16 +172,18 @@ void UTerrainGenerator::GenerateNewIslandMesh(FTerrainGenCompletedDelegate Out, 
 	OffsetsPerCondition = FVector(TerrainGenPerlinHelpers::Stream.FRandRange(-1000.2, 1000.3), TerrainGenPerlinHelpers::Stream.FRandRange(-1000.5, 1000.4), TerrainGenPerlinHelpers::Stream.FRandRange(-1000.1, 1000.0));
 	FVector offsetsPerCondition = OffsetsPerCondition;
 
-	AsyncTask(ENamedThreads::AnyNormalThreadNormalTask, [Out, IslandMesh, IslandTransform, IslandTileSize, BaseTerrainGenerationSettings, IslandMaterialDataCollection, offsetsPerCondition]() mutable
+	// Get coordinate information
+	FBox bbox = UGeometryScriptLibrary_MeshQueryFunctions::GetMeshBoundingBox(IslandMesh);
+	FVector min = bbox.Min * IslandTransform.GetScale3D();
+	FVector max = bbox.Max * IslandTransform.GetScale3D();
+	BBoxMin = min;
+	BBoxMax = max;
+	UE_LOG(LogTemp, Warning, TEXT("Terrain Generation Progress: BBox Min = (%f/%f), Max = (%f/%f)."), min.X, min.Y, max.X, max.Y);
+
+	AsyncTask(ENamedThreads::AnyNormalThreadNormalTask, [Out, IslandMesh, IslandTransform, IslandTileSize, BaseTerrainGenerationSettings, IslandMaterialDataCollection, offsetsPerCondition, min, max]() mutable
 		{
 			UE_LOG(LogTemp, Display, TEXT("(1/4) Terrain Generation Progress: Tesselating..."));
 			UGeometryScriptLibrary_MeshSubdivideFunctions::ApplyUniformTessellation(IslandMesh, IslandTileSize - 1, nullptr);
-
-			// Get coordinate information
-			FBox bbox = UGeometryScriptLibrary_MeshQueryFunctions::GetMeshBoundingBox(IslandMesh);
-			FVector min = bbox.Min * IslandTransform.GetScale3D();
-			FVector max = bbox.Max * IslandTransform.GetScale3D();
-			UE_LOG(LogTemp, Warning, TEXT("Terrain Generation Progress: BBox Min = (%f/%f), Max = (%f/%f)."), min.X, min.Y, max.X, max.Y);
 
 			// Get mesh vertex and color lists to set
 			FGeometryScriptVectorList VertexPositionList;
@@ -154,7 +206,7 @@ void UTerrainGenerator::GenerateNewIslandMesh(FTerrainGenCompletedDelegate Out, 
 
 				FLinearColor currentVertexCondition = CalculateCondition(vertexUVPosition, IslandTileSize, BaseTerrainGenerationSettings, offsetsPerCondition);
 				currentVertexPosition = FVector(currentVertexPosition.X, currentVertexPosition.Y, CalculateHeight(vertexUVPosition, IslandTileSize, BaseTerrainGenerationSettings, currentVertexCondition));
-				
+
 				TryPlaceMaterial(vertexUVPosition, currentVertexPosition, currentVertexCondition, offsetsPerCondition, IslandTileSize, BaseTerrainGenerationSettings, IslandMaterialDataCollection);
 
 				// Transform back to world space
@@ -163,7 +215,8 @@ void UTerrainGenerator::GenerateNewIslandMesh(FTerrainGenCompletedDelegate Out, 
 				// See if any materials should be placed here
 				
 				(*VertexPositionList.List)[vertexIndex] = currentVertexPosition;
-				(*VertexColorList.List)[vertexIndex] = currentVertexCondition;
+
+				(*VertexColorList.List)[vertexIndex] = FLinearColor((FVector(CalculateBiomeKey(currentVertexCondition)) + FVector::One())/2.0f);
 			
 			}
 
